@@ -1,0 +1,9 @@
+* Chapter 9 | Convolutional Neural Networks
+
+Conv Nets are a specialized kind of neural network for processing data that has a known, grid like topology. Examples include time series data, which can be thought of as a 1D grid takings samples at regular time intervals, and image data which can be thought of as a 2D grid of pixels. 
+
+The name convolutional neural network implies that the network employs a mathematical operation called a **convolution**. CNNs use convolution in place of general matrix multiplication in at least one of their layers. 
+
+** The Convolution Operation
+
+$$s(t) = \int x(a)$$
