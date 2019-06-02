@@ -11,7 +11,7 @@ output:
 ---
 
 ```{r, echo = FALSE}
-knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, out.width = "100%")
 
 # programming 
 library(tensorflow)
@@ -349,12 +349,790 @@ decode_review(train_data[[1]])
 
 #### Prepare the Data 
 
+The reviews (arrays of integers) must be converted to tensors before being fed into the neural network. This can be done in the following ways: 
 
+- One hot encode the arrays to convert them into vectors of 0s and 1s. This approach is memory intensive. 
+
+- Pad the arrays so they all have the same length, then create an integer tensor. We can use an embedding layer capable of handling this shape as the first layer in the network. We will use this approach in this tutorial. 
+
+```{r}
+train_data <- pad_sequences(
+    train_data,
+    value = word_index_df %>%
+        filter(word == "<PAD>") %>%
+        select(idx) %>%
+        pull(),
+    padding = "post",
+    maxlen = 256
+)
+
+test_data <- pad_sequences(
+    test_data,
+    value = word_index_df %>%
+        filter(word == "<PAD>") %>%
+        select(idx) %>%
+        pull(),
+    padding = "post",
+    maxlen = 256
+)
+```
+
+Let's look at the length of the examples now: 
+
+```{r}
+length(train_data[1, ])
+length(train_data[2, ])
+```
+
+and look at the padded first review 
+
+```{r}
+train_data[1,]
+```
+
+#### Build the Model 
+
+```{r}
+# input shape is the vocabulary count used for the movie reviews
+vocab_size <- 10000
+
+model <- keras_model_sequential()
+
+model %>%
+    layer_embedding(input_dim = vocab_size, output_dim = 16) %>%
+    layer_global_average_pooling_1d() %>%
+    layer_dense(units = 16, activation = "relu") %>%
+    layer_dense(units = 1, activation = "sigmoid")
+
+model %>% summary()
+```
+
+- The first layer is an embedding layer that takes the integer encoded vocabulary and looks up the embedding vector for each word index. 
+
+- The global average pooling 1d layer returns a fixed length output vector for each example by averaging over the sequence dimension. This allows the model to handle input of variable length in a simple manner. 
+
+- The last layer is a densely connected single output node with a sigmoid activation function. 
+
+```{r}
+# compile the model
+model %>% compile(
+              optimizer = "adam",
+              loss = "binary_crossentropy",
+              metrics = list("accuracy")
+          )
+```
+
+#### Create a Validation Set
+
+```{r}
+x_val <- train_data[1:10000, ]
+partial_x_train <- train_data[10001:nrow(train_data), ]
+
+y_val <- train_labels[1:10000]
+partial_y_train <- train_labels[10001:length(train_labels)]
+```
+
+#### Train the Model 
+
+```{r}
+history <- model %>% fit(
+                         partial_x_train,
+                         partial_y_train,
+                         epochs = 40,
+                         batch_size = 512,
+                         validation_data = list(x_val, y_val),
+                         verbose = 1
+                     )
+
+plot(history)
+```
+
+#### Evaluate the Model
+
+```{r}
+results <- model %>% evaluate(test_data, test_labels)
+```
+
+This fairly naive approach achieves an accuracy of about 87%. With more advanced approaches, the model should get closer to 95%. 
 
 
 ## Basic Regression
 
+This segment builds a regression model to predict the median price of homes in a Boston suburb during the mid 1970s. 
+
+```{r}
+# get data
+boston_housing <- dataset_boston_housing()
+
+c(train_data, train_labels) %<-% boston_housing$train
+c(test_data, test_labels) %<-% boston_housing$test 
+```
+
+This dataset is much smaller than a usual keras usecase. 
+
+```{r}
+paste0("Training entries: ", length(train_data), ", labels: ", length(train_labels))
+```
+
+The dataset contains 13 different features: 
+
+- Per capita crime rate.
+- The proportion of residential land zoned for lots over 25,000 square feet.
+- The proportion of non-retail business acres per town.
+- Charles River dummy variable (= 1 if tract bounds river; 0 otherwise).
+- Nitric oxides concentration (parts per 10 million).
+- The average number of rooms per dwelling.
+- The proportion of owner-occupied units built before 1940.
+- Weighted distances to five Boston employment centers.
+- Index of accessibility to radial highways.
+- Full-value property-tax rate per $10,000.
+- Pupil-teacher ratio by town.
+- 1000 * (Bk - 0.63) ** 2 where Bk is the proportion of Black people by town.
+- Percentage lower status of the population.
+
+```{r}
+train_data %>% head(1)
+```
+
+We can add column names for better data inspection. 
+
+```{r}
+library(tibble)
+
+column_names <- c('CRIM', 'ZN', 'INDUS', 'CHAS', 'NOX', 'RM', 'AGE', 
+                  'DIS', 'RAD', 'TAX', 'PTRATIO', 'B', 'LSTAT')
+
+train_df <- as_tibble(train_data)
+
+colnames(train_df) <- column_names
+
+train_df %>% head()
+```
+
+The labels are the house prices in thousands of dollars. Note the 1970's prices.
+
+```{r}
+train_labels[1:10]
+```
+
+#### Normalize Features
+
+It's recommended to normalize features that use different scales and ranges. 
+
+```{r}
+# normalize training data
+train_data <- scale(train_data)
+
+# use means and SDs from training to normalize test set
+col_means_train <- attr(train_data, "scaled:center")
+col_stddevs_train <- attr(train_data, "scaled:scale")
+
+test_data <- scale(test_data, center = col_means_train, scale = col_stddevs_train)
+
+# look at first training sample normalized
+train_data[1,]
+```
+
+#### Create the Model 
+
+```{r}
+build_model <- function() {
+    model <- keras_model_sequential() %>%
+        layer_dense(units = 64, activation = "relu",
+                    input_shape = dim(train_data)[2]) %>%
+        layer_dense(units = 64, activation = "relu") %>%
+        layer_dense(units = 1)
+
+    model %>% compile(
+                  loss = "mse",
+                  optimizer = optimizer_rmsprop(),
+                  metrics = list("mean_absolute_error")
+              )
+
+    model 
+}
+
+model <- build_model()
+
+model %>% summary()
+```
+
+#### Train the Model 
+
+The model is trained for 500 epochs. It is also showed how to use a custom callback, replacing the default training output by a single dot per epoch. 
+
+```{r}
+print_dot_callback <- callback_lambda(
+    on_epoch_end = function(epoch, logs) {
+        if (epoch %% 80 == 0) cat("\n")
+        cat(".")
+    }
+)
+
+epochs <- 500
+
+# fit the model and store training stats
+history <- model %>% fit(
+                         train_data,
+                         train_labels,
+                         epochs = epochs,
+                         validation_split = 0.2,
+                         verbose = 0,
+                         callbacks = list(print_dot_callback)
+                     )
+
+```
+
+Now we can visualize the model's training progress using the metrics stored in the history variable. 
+
+```{r}
+library(ggplot2)
+
+plot(history, metrics = "mean_absolute_error", smooth = FALSE) +
+    coord_cartesian(ylim = c(0, 5))
+```
+
+This graph shows little improvement in the model after 200 epochs. Let's update the fit method to automatically stop training when the validation score doesn't improve. We'll use a callback that tests a training condition for every epoch. If a set of epochs elapses without showing any improvement, it automatically stops the training. 
+
+```{r}
+# the patience parameter is the amount of epochs to check for improvement
+early_stop <- callback_early_stopping(monitor = "val_loss", patience = 20)
+
+model <- build_model()
+
+history <- model %>% fit(
+                         train_data,
+                         train_labels,
+                         epochs = epochs,
+                         validation_split = 0.2,
+                         verbose = 0,
+                         callbacks = list(early_stop, print_dot_callback)
+                     )
+
+plot(history, metrics = "mean_absolute_error", smooth = FALSE) +
+    coord_cartesian(xlim = c(0, 150), ylim = c(0, 5))
+
+```
+
+This graph shows the average error is about \$2500. This is not insignificant when some of the labels are only \$15000. 
+
+```{r}
+# check how model performs on the test set
+c(loss, mae) %<-% (model %>% evaluate(test_data, test_labels, verbose = 0)) 
+
+paste0("Mean absolute error on test set: $", sprintf("%.2f", mae * 1000))
+```
+
+#### Predict 
+
+Finally, let's predict some housing prices using data in the testing set: 
+
+```{r}
+test_predictions <- model %>% predict(test_data)
+
+test_predictions[, 1]
+```
+
+#### Conclusion
+
+This notebook introduced a few techniques to handle a regression problem. 
+
+- Mean Squared Error is a common loss function for regression problems 
+- A common regression metric is mean absolute error 
+- When input data features have different ranges, each feature should be scaled independently
+- If there is not much training data, prefer a small network with few hidden layers to avoid overfitting 
+- early stopping is a useful technique to prevent overfitting 
+
 ## Overfitting / Underfitting 
 
+In previous tabs we saw that often our model would overfit to the training data. The best solution to overfitting is to get more data. A model trained on more data will naturally generalize better. When that is not possible, the next best solution is to use techniques like regularization. These place constraints on the quantity and type of information our model can store. If a network can only afford to focus on a small number of patterns, the optimization process will force it to focus on the most prominent patterns, which have a better chance of generalizing well. 
+
+In this section we will explore two common regularization techniques - weight regularization and dropout. 
+
+```{r}
+num_words <- 10000
+imdb <- dataset_imdb(num_words = num_words)
+
+c(train_data, train_labels) %<-% imdb$train 
+c(test_data, test_labels) %<-% imdb$test
+```
+
+Rather than using embedding like the previous section, here we will multi hot encode the sentences. This model will quickly overfit to the training set. It will be used to demonstrate when overfitting occurs and how to fight it. 
+
+Multi-hot encoding our lists means turning them into vectors of 0s and 1s. Concretely, this would mean, for instance, turning the sequence [3, 5] into a 10,000 dimensional vector that would be all zeros except for indices 3 and 5, which would be ones. 
+
+```{r}
+multi_hot_sequences <- function(sequences, dimension) {
+    multi_hot <- matrix(0, nrow = length(sequences), ncol = dimension)
+
+    for (i in 1:length(sequences)) {
+        multi_hot[i, sequences[[i]]] <- 1 
+    }
+    multi_hot
+}
+
+train_data <- multi_hot_sequences(train_data, num_words)
+test_data <- multi_hot_sequences(test_data, num_words)
+```
+
+Let's look at one of the resulting multihot vectors. The word indices are sorted by frequency, so it is expected that there are more 1-values near index zero, as we can see in this plot: 
+
+```{r}
+first_text <- data.frame(word = 1:10000, value = train_data[1, ])
+
+first_text %>%
+    ggplot(aes(x = word, y = value)) +
+    geom_line() +
+    theme(axis.title.y = element_blank(),
+          axis.text.y = element_blank(),
+          axis.ticks.y = element_blank())
+```
+
+#### Demonstrate Overfitting 
+
+In order to demonstrate overfitting, first we will create a simple model using only dense layers, then a smaller version and compare them. 
+
+```{r}
+# create a baseline model
+baseline_model <- keras_model_sequential() %>%
+    layer_dense(units = 16, activation = "relu", input_shape = 10000) %>%
+    layer_dense(units = 16, activation = "relu") %>%
+    layer_dense(units = 1, activation = "sigmoid")
+
+baseline_model %>% compile(
+                       optimizer = "adam",
+                       loss = "binary_crossentropy",
+                       metrics = list("accuracy")
+                   )
+
+baseline_model %>% summary()
+
+baseline_history <- baseline_model %>% fit(
+                                           train_data,
+                                           train_labels,
+                                           epochs = 20,
+                                           batch_size = 512,
+                                           validation_data = list(test_data, test_labels),
+                                           verbose = 2
+                                       )
+
+plot(baseline_history)
+```
+
+```{r}
+# create a smaller model to compare
+smaller_model <- keras_model_sequential() %>%
+    layer_dense(units = 4, activation = "relu", input_shape = 10000) %>%
+    layer_dense(units = 4, activation = "relu") %>%
+    layer_dense(units = 1, activation = "sigmoid")
+
+smaller_model %>% compile(
+                      optimizer = "adam",
+                      loss = "binary_crossentropy",
+                      metrics = list("accuracy")
+                  )
+
+smaller_model %>% summary()
+
+# train the model using the same data
+smaller_history <- smaller_model %>% fit(
+                                         train_data,
+                                         train_labels,
+                                         epochs = 20,
+                                         batch_size = 512,
+                                         validation_data = list(test_data, test_labels),
+                                         verbose = 2
+                                     )
+
+plot(smaller_history)
+```
+
+Now, let's add to this benchmark a network that has much more capacity, far more than the problem would warrant: 
+```{r}
+# create a bigger model
+bigger_model <- keras_model_sequential() %>%
+    layer_dense(units = 512, activation = "relu", input_shape = 10000) %>%
+    layer_dense(units = 512, activation = "relu") %>%
+    layer_dense(units = 1, activation = "sigmoid")
+
+bigger_model %>% compile(
+                     optimizer = "adam",
+                     loss = "binary_crossentropy",
+                     metrics = list("accuracy")
+                 )
+
+bigger_model %>% summary()
+
+bigger_history <- bigger_model %>% fit(
+                                       train_data,
+                                       train_labels,
+                                       epochs = 20,
+                                       batch_size = 512,
+                                       validation_data = list(test_data, test_labels),
+                                       verbose = 2
+                                   )
+
+plot(bigger_history)
+```
+
+##### Plot the Training and Validation Loss
+
+Now let's plot the loss curves for the 3 models. 
+
+```{r}
+compare_cx <- data.frame(
+    baseline_train = baseline_history$metrics$loss,
+    baseline_val = baseline_history$metrics$val_loss,
+    smaller_train = smaller_history$metrics$loss,
+    smaller_val = smaller_history$metrics$val_loss,
+    bigger_train = bigger_history$metrics$loss,
+    bigger_val = bigger_history$metrics$val_loss
+) %>%
+    rownames_to_column() %>%
+    mutate(rowname = as.integer(rowname)) %>%
+    gather(key = "type", value = "value", -rowname)
+
+compare_cx %>%
+    ggplot(aes(x = rowname, y = value, color = type)) +
+    geom_line() +
+    xlab("epoch") + ylab("loss")
+```
+
+#### Strategies 
+
+This section will focus on **Weight Regularization** and **Dropout**. 
+
+##### Weight Regularization 
+
+Given some training data and a network architecture, there are multiple sets of weights values (multiple models) that could explain the data, and simpler models are less likely to overfit than complex ones. 
+
+A "simpler model" in this context is a model where the distribution of parameter values has less entropy (or a model with fewer parameters altogether). Thus, a common way to mitigate overfitting is to put constraints on the complexity of a network by forcing its weights to only take on small values, which makes the distribution of weight values more regular. This is called weight regularization, and it is done by adding to the loss function of the network a cost associated with having large weights. 
+
+This cost comes in two flavors: 
+
+- L1 regularization, where the cost added is proportional to the absolute value of the weights coefficients (the L1 norm of the weights). 
+
+- L2 regularization, where the cost added is proportional to the square of the value of the weights coefficients (the L2 norm of the weights). L2 regularization is also called weight decay in the context of neural networks. 
+
+In Keras, weight regularization is added by passing weight regularizer instances to layers.
+
+```{r}
+L2_model <- keras_model_sequential() %>%
+    layer_dense(units = 16, activation = "relu", input_shape = 10000,
+                kernel_regularizer = regularizer_l2(l = 0.001)) %>%
+    layer_dense(units = 16, activation = "relu",
+                kernel_regularizer = regularizer_l2(l = 0.001)) %>%
+    layer_dense(units = 1, activation = "sigmoid")
+
+L2_model %>% compile(
+                 optimizer = "adam",
+                 loss = "binary_crossentropy",
+                 metrics = list("accuracy")
+             )
+
+L2_history <- L2_model %>% fit(
+                               train_data,
+                               train_labels,
+                               epochs = 20,
+                               batch_size = 512,
+                               validation_data = list(test_data, test_labels),
+                               verbose = 2
+                           )
+```
+
+`l2(0.001)` means that every coefficient in the weight matrix of the layer will ad 0.001 * `weight_coefficient_value` to the total loss of the network. Note that because this penalty is only added at training time, the loss for this network will be much higher at training than at test time. 
+
+Here is the impact of our L2 regularization penalty: 
+
+```{r}
+compare_cx <- data.frame(
+  baseline_train = baseline_history$metrics$loss,
+  baseline_val = baseline_history$metrics$val_loss,
+  l2_train = L2_history$metrics$loss,
+  l2_val = L2_history$metrics$val_loss
+) %>%
+  rownames_to_column() %>%
+  mutate(rowname = as.integer(rowname)) %>%
+  gather(key = "type", value = "value", -rowname)
+
+compare_cx %>%
+    ggplot(aes(x = rowname, y = value, color = type)) +
+    geom_line() +
+    xlab("epoch") + ylab("loss")
+
+```
+
+As can be seen above, the L2 regularized model has become more resistant to overfitting than the baseline odel, even though both models have the same number of parameters. 
+
+##### Dropout 
+
+Dropout consists of randomly dropping out (set to zero) a number of output features of the layer during training. Let's say taht a given layer would normally have returned a vector for a given input sample during training. After applying dropout, this vector will have a few zero entries distributed at random. 
+
+In Keras, we can apply dropout via the `layer_dropout`, which gets applied to the output of the layer directly before. 
+
+```{r}
+dropout_model <- keras_model_sequential() %>%
+    layer_dense(units = 16, activation = "relu", input_shape = 10000) %>%
+    layer_dropout(0.6) %>%
+    layer_dense(units = 16, activation = "relu") %>%
+    layer_dropout(0.6) %>%
+    layer_dense(units = 1, activation = "sigmoid")
+
+dropout_model %>% compile(
+                      optimizer = "adam",
+                      loss = "binary_crossentropy",
+                      metrics = list("accuracy")
+                  )
+
+dropout_history <- dropout_model %>% fit(
+                                         train_data,
+                                         train_labels,
+                                         epochs = 20,
+                                         batch_size = 512,
+                                         validation_data = list(test_data, test_labels),
+                                         verbose = 2
+                                     )
+```
+
+Let's see how well it worked 
+
+```{r}
+compare_cx <- data.frame(
+  baseline_train = baseline_history$metrics$loss,
+  baseline_val = baseline_history$metrics$val_loss,
+  dropout_train = dropout_history$metrics$loss,
+  dropout_val = dropout_history$metrics$val_loss
+) %>%
+  rownames_to_column() %>%
+  mutate(rowname = as.integer(rowname)) %>%
+  gather(key = "type", value = "value", -rowname)
+
+compare_cx %>% 
+    ggplot(aes(x = rowname, y = value, color = type)) +
+    geom_line() +
+    xlab("epoch") +
+    ylab("loss")
+```
+
+Adding dropout is a clear improvement over the baseline model. 
+
+
+To recap: 
+
+Here are the most common ways to prevent overfitting in neural networks:
+
+- get more training data
+- reduce the capacity of the network 
+- add weight regularization 
+- add dropout
+
+Two more approaches not covered here are data augmentation and batch normalization.
+
 ## Save / Restore Models 
+
+Model progress can be saved after, as well as during training. 
+
+We'll use the MNIST data to train our model and demonstrate saving weights. To speed up these demonstration runs, we will only use the first 1000 examples. 
+
+```{r}
+mnist <- dataset_mnist()
+
+c(train_images, train_labels) %<-% mnist$train
+c(test_images, test_labels) %<-% mnist$test
+
+train_labels <- train_labels[1:1000]
+test_labels <- test_labels[1:1000]
+
+train_images <- train_images[1:1000, , ] %>%
+    array_reshape(c(1000, 28 * 28))
+
+train_images <- train_images / 255
+
+test_images <- test_images[1:1000, , ] %>%
+    array_reshape(c(1000, 28 * 28))
+
+test_images <- test_images / 255 
+```
+
+##### Define a Model 
+
+```{r}
+# returns a short sequential model
+create_model <- function() {
+    model <- keras_model_sequential() %>%
+        layer_dense(units = 512, activation = "relu", input_shape = 784) %>%
+        layer_dropout(0.2) %>%
+        layer_dense(units = 10, activation = "softmax")
+
+    model %>% compile(
+                  optimizer = "adam",
+                  loss = "sparse_categorical_crossentropy",
+                  metrics = list("accuracy")
+              )
+    model
+}
+
+
+model <- create_model()
+
+model %>% summary()
+```
+
+#### Save the Entire Model 
+
+The habitual form of saving a keras model is aving to the HDF5 format. 
+
+The resulting file contains weights, configuration, and the optimizers configuration. This allows us to resume training later, from the exact state. 
+
+```{r}
+model %>% fit(
+              train_images,
+              train_labels,
+              epochs = 5
+          )
+
+model %>% save_model_hdf5("my_model.h5")
+```
+
+If we only wanted to save the weights, we could replace the last line with 
+
+```{r}
+model %>% save_model_weights_hdf5("my_model_weights.h5")
+```
+
+Now recreate the model from that file: 
+
+```{r}
+new_model <- load_model_hdf5("my_model.h5")
+
+new_model %>% summary()
+```
+
+##### Save Checkpoints During Training 
+
+It is useful to automatically save checkpoints during and at the end of training. This way we can use a trained model without having to retain it, or pick up training where we left off, in case the training process was interrupted. 
+
+`callback_model_checkpoint` is a callback that performs this task. The callback takes a couple of arguments to configure checkpoint. By default, `save_weights_only` is set to false, which means the complete model is being saved - including architecture and configuration. We can then restore the model as outlined in the previous paragraph. 
+
+In the code below we will focus on just saving and restoring the weights. The `filepath` argument can contain named formatting options, for example: if `filepath` is `weights.{epoch:02d}--{val_loss:.2f}.hdf5`, then the model checkpoints will be saved with the epoch number and the validation loss in the filename. 
+
+#### Checkpoint Callback Usage
+
+Train the model and pass it the `callback_model_checkpoint`: 
+
+```{r}
+checkpoint_dir <- "checkpoints"
+
+dir.create(checkpoint_dir, showWarnings = FALSE)
+
+filepath <- file.path(checkpoint_dir, "weights.{epoch:02d}--{val_loss:.2f}.hdf5")
+
+# create checkpoint callback
+cp_callback <- callback_model_checkpoint(
+    filepath = filepath,
+    save_weights_only = TRUE,
+    verbose = 1
+)
+
+model <- create_model()
+
+model %>% fit(
+              train_images,
+              train_labels,
+              epochs = 10,
+              validation_data = list(test_images, test_labels),
+              callbacks = list(cp_callback)
+          )
+```
+
+Inspect the files that were created:
+
+```{r}
+list.files(checkpoint_dir)
+
+files_in_dir <- list.files(checkpoint_dir)
+
+latest_file <- files_in_dir[length(files_in_dir)]
+```
+
+Create a new, untrained model. When restoring a model from only weights, we must have a model with the same architecture as the original model. Since its the same model architecture, we can share weights despite it being a different instance of the model. 
+
+Now lets rebuild a fresh, untrained model and evaluate it on a test set. An untrained model will perform at chance levels (~ 10% accuracy). 
+
+```{r}
+fresh_model <- create_model()
+
+score <- fresh_model %>% evaluate(test_images, test_labels)
+```
+
+Then load the weights from the latest checkpoint (epoch 10) and re evaluate: 
+
+```{r}
+fresh_model %>% load_model_weights_hdf5(
+                    file.path(checkpoint_dir, latest_file)
+                )
+
+score <- fresh_model %>% evaluate(test_images, test_labels)
+```
+
+To reduce the number of files, we can also save model weights only once every nth epoch, e.g.: 
+
+```{r}
+checkpoint_dir <- "checkpoints"
+unlink(checkpoint_dir, recursive = TRUE)
+dir.create(checkpoint_dir)
+filepath <- file.path(checkpoint_dir, "weights.{epoch:02d}-{val_loss:.2f}.hdf5")
+
+
+# create checkpoint callback
+cp_callback <- callback_model_checkpoint(
+    filepath = filepath,
+    save_weights_only = TRUE,
+    period = 5,
+    verbose = 1
+)
+
+model <- create_model()
+
+model %>% fit(
+              train_images,
+              train_labels,
+              epochs = 10,
+              validation_data = list(test_images, test_labels),
+              callbacks = list(cp_callback)
+          )
+
+list.files(checkpoint_dir)
+```
+
+Alternatively, we can decide to only save the best model, where best by default is defined as validation loss. 
+
+```{r}
+checkpoint_dir <- "checkpoints"
+unlink(checkpoint_dir, recursive = TRUE)
+dir.create(checkpoint_dir)
+filepath <- file.path(checkpoint_dir, "weights.{epoch:02d}-{val_loss:.2f}.hdf5")
+
+# create checkpoint callback for best model
+cp_callback <- callback_model_checkpoint(
+    filepath = filepath,
+    save_weights_only = TRUE,
+    save_best_only = TRUE,
+    verbose = 1
+)
+
+model <- create_model()
+
+model %>% fit(
+              train_images,
+              train_labels,
+              epochs = 10,
+              validation_data = list(test_images, test_labels),
+              callbacks = list(cp_callback)
+          )
+
+list.files(checkpoint_dir)
+```
+
+In this case, weights were saved on all epochs except for 6, 7, 9, 10 since weights didn't improve. 
 
