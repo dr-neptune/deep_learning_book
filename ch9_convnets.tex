@@ -282,6 +282,156 @@ The linear part of a locally connected layer is then given by
 
 This is sometimes also called \textbf{unshared convolution}, because it is a similar operation to discrete covolution with a small kernel, but without sharing parameters across locations. 
 
+\textbf{I had a bunch of notes for the rest of the section, but my computer froze and didn't save anything. Read from 350 - 358 for the information.}
+
+\section{Structured Outputs}
+
+Convolutional networks can be used to output a high dimensional, structured object, rather than just predicting a class label for a classification task or a real value for a regression task. Typically this object is just a tensor, emitted by a standard convolutional layer. 
+
+For example, the model might emit a tensor $S$ where $S_{i,j,k}$ is the probability that pixel $(j,k)$ of the input to the network belongs to class $i$. This allows the model to label every pixel in an image and draw precise masks that follow the outlines of individual objects. 
+
+One strategy for pixelwise labeling of images is to produce an initial guess of the image labels, then refine the initial guess using the interactions between neighboring pixels. Repeating this refinement step several times corresponds to using the same convolutions at each stage, sharing weights between the last layers of the deep net. This makes the sequence of computations performed by the successive convolutional layers with weights shared across layers a particular kind of recurrent network. 
+
+Once the prediction for each pixel is made, we can use other methods to segment the image into regions. The general idea is that we can assume that large groups of contiguous pixels tend to be associated with the same label. 
+
+\section{Data Types}
+
+Consider a set of images where each image has a different width and height. Convolution is straight forward to apply; the kernel is simply applied a different number of times depending on the size of the input, and the output of the convolution operation scales accordingly. Convolution may be viewed as matrix multiplication; the same convolutional kernel induces a different size of doubly block circulant matrices for each size of input. 
+
+Sometimes we want the output of the network to have variable size as well as the input - for example in the pixel class label example above. In this case, no further design work is necessary. 
+
+In other cases, the network must produce some fixed size output - for example if we want to assign a single class label to the entire image. In this case we must make additional design steps, like inserting a pooling layer whose pooling regions scale in size proportional to the size of the input in order to maintain a fixed number of pooled outputs. 
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.7\textwidth]{conv_data.png}
+\end{figure}
+
+Convolution for processing variable sized inputs only makes sense for inputs that have variable size because they contain varying amounts of observation of the same kind of thing - different lengths of recordings over time, different widths of observations of space, etc. 
+
+Convolution does \textbf{not} make sense if the input has variable size because it can optionally include different kinds of observations. For example, if we are processing college applications, and our features consist of both grades and standardized test scores, but not every applicant took the standardized test, then it does not make sense to convolve the same weights over both the features corresponding to the grades and the features corresponding to the test scores. 
+
+\section{Efficient Convolution Algorithms}
+
+Convolution is equivalent to converting both the input and the kernel to the frequency domain using a Fourier transform, performing pointwise multiplication of the two signals, and converting back to the time domain using an inverse Fourier transform. For some problem sizes this can be faster than the naive implementation of discrete convolution.
+
+When a $d$-dimensional kernel can be expressed as the outer product of $d$ vectors, one vector per dimension, the kernel is called \textbf{separable}. When the kernel is separable, naive convolution is inefficient. It is equivalent to compose $d$ one dimensional convolutions of each of these vectors. 
+
+The composed approach is significantly faster than performing one $d$-dimensional convolution with their outer product. The kernel also takes fewer parameters to represent as vectors. If the kernel is $w$ elements wide in each dimension, then naive multidimensional convolution requires $O(w^d)$ runtime and parameter storage space, and separable convolution requires $O(w \times d)$ runtime and parameter storage space. 
+
+\section{Random or Unsupervised Features}
+
+There are three basic strategies for obtaining convolutional kernels without supervised training: 
+
+\begin{enumerate}
+\item Initialize them randomly
+\item design them by hand
+\item learn the kernels with an unsupervised criterion
+\end{enumerate}
+
+For example \href{http://ai.stanford.edu/~acoates/papers/coatesleeng_aistats_2011.pdf}{Coates et. al} applies k-means clustering to small image patches, then uses each learned centroid as a convolution kernel. 
+
+\begin{quote}
+  \textbf{Abstract: } A great deal of research has focused on
+  algorithms for learning features from unlabeled data. Indeed, much
+  progress has been made on benchmark datasets like NORB and CIFAR by
+  employing increasingly complex unsupervised learning algorithms and
+  deep models. In this paper, however, we show that several simple
+  factors, such as the number of hidden nodes in the model, may be
+  more important to achieving high performance than the learning
+  algorithm or the depth of the model. Specifically, we will apply
+  several offthe-shelf feature learning algorithms (sparse
+  auto-encoders, sparse RBMs, K-means clustering, and Gaussian
+  mixtures) to CIFAR, NORB, and STL datasets using only singlelayer
+  networks. We then present a detailed analysis of the effect of
+  changes in the model setup: the receptive field size, number of
+  hidden nodes (features), the step-size (“stride”) between extracted
+  features, and the effect of whitening. Our results show that large
+  numbers of hidden nodes and dense feature extraction are critical to
+  achieving high performance—so critical, in fact, that when these
+  parameters are pushed to their limits, we achieve state-of-the-art
+  performance on both CIFAR-10 and NORB using only a single layer of
+  features. More surprisingly, our best performance is based on
+  K-means clustering, which is extremely fast, has no hyperparameters
+  to tune beyond the model structure itself, and is very easy to
+  implement. Despite the simplicity of our system, we achieve accuracy
+  beyond all previously published results on the CIFAR-10 and NORB
+  datasets (79.6\% and 97.2\% respectively).
+\end{quote}
+
+The paper above has the following framework: 
+
+Perform the following steps to learn a feature representation: 
+
+\begin{enumerate}
+\item Extract random patches from unlabeled training images
+\item Apply a preprocessing stage to the patches
+\item Learn a feature mapping using an unsupervised learning algorithm
+\item Extract features from equally spaced sub-patches covering the input image
+\item Pool features together over regions of the input image to reduce the number of feature values
+\item Train a linear classifier to predict the labels given the feature vectors
+\end{enumerate}
+
+Where the unsupervised learning algorithms mentioned were the following: 
+
+\begin{enumerate}
+\item Sparse Autoencoder 
+\item Sparse Restricted Boltzmann Machine
+\item K-means Clustering
+\item Gaussian Mixtures
+\end{enumerate}
+
+Learning the features with an unsupervised criterion allows them to be determined separately from the classifier layer at the top of the architecture. One can then extract the features for the entire training set just once, essentially constructing a new training set for the last layer. Learning the last layer is then typically a convex optimization problem, assuming the last layer is something like logistic regression or an SVM. 
+
+Random filters also often work well. (Jarrett et al. , 2009 ; Saxe et al. , 2011 ; Pinto et al. , 2011 ; Cox and Pinto , 2011 ). Saxe et al. ( 2011 ) showed that layers consisting of convolution following by pooling naturally become frequency selective and translation invariant when assigned random weights. 
+
+They argue that this provides an easy way to choose architectures for conv nets: 
+Evaluate select convolutional networks by training only the last layer, then take the best of these architectures and train the entire architecture using a more expensive approach. 
+
+An intermediate approach is to learn the features, but using methods that do not require full forward and backward propagation at every gradient step. We can use greedy layer-wise pretraining to train the first layer in isolation given those features, then extract all features from the first layer only once, then train the second layer in isolation given those features, and so on. The canonical example of greedy layer-wise pretraining of a convolutional model is the convolutional deep belief network: \href{http://www.cnbc.cmu.edu/cns/papers/lee-CDBN.pdf}{Lee et. al (2009)}.
+
+\begin{quote}
+  \textbf{Abstract: } There has been much interest in unsupervised
+learning of hierarchical generative models such as deep belief
+networks. Scaling such models to full-sized, high-dimensional images
+remains a difficult problem. To address this problem, we present the
+convolutional deep belief network, a hierarchical generative model
+which scales to realistic image sizes. This model is
+translation-invariant and supports efficient bottom-up and top-down
+probabilistic inference. Key to our approach is probabilistic
+max-pooling, a novel technique which shrinks the representations of
+higher layers in a probabilistically sound way. Our experiments show
+that the algorithm learns useful high-level visual features, such as
+object parts, from unlabeled images of objects and natural scenes. We
+demonstrate excellent performance on several visual recognition tasks
+and show that our model can perform hierarchical (bottom-up and
+top-down) inference over full-sized images.
+\end{quote}
+
+\section{The Neuroscientific Basis for Convolutional Networks}
+
+\href{http://www.cs.toronto.edu/~fritz/absps/langTDNN.pdf}{Lang and Hinton (1988)}
+
+\begin{quote}
+  \textbf{Abstract: } A translation-invariant back-propagation network
+is described that performs better than a sophisticated continuous
+acoustic parameter hidden Markov model on a noisy, lO0-speaker
+confusable vocabulary isolated word recognition task. The network's
+replicated architecture permits it to extract precise information from
+unaligned training patterns selected by a naive segmentation rule.
+\end{quote}
+
+Lang and Hunton introduced the use of backpropagation to train \textbf{time-delay neural networks}. TDNNs are one dimensional convolutional networks applied to time series. Following the success of backpropagation based training of TDNNs, 
+\href{http://yann.lecun.com/exdb/publis/pdf/lecun-89e.pdf}{LeCun et. al. (1989)} developed the model convolutional network by applying the same training algorithm to 2D convolution applied to images.
+
+\begin{quote}
+  \textbf{Abstract: } The ability of learning networks to generalize can be greatly enhanced by providing constraints from the task domain. This paper demonstrates how such constraints can be integrated into a backpropagation network through the architecture of the network. This approach has been successfully applied to the recognition of handwritten zip code digits provided by the U.S. Postal Service. A single network learns the entire recognition operation, going from the normalized image of the character to the final classification.
+\end{quote}
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.7\textwidth]{gabor.png}
+\end{figure}
 
 
 \end{document}

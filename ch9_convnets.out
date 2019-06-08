@@ -7,3 +7,8 @@
 \BOOKMARK [1][-]{section.0.4}{Pooling}{}% 7
 \BOOKMARK [1][-]{section.0.5}{Convolution and Pooling as an Infinitely Strong Prior}{}% 8
 \BOOKMARK [1][-]{section.0.6}{Variants of the Basic Convolution Function}{}% 9
+\BOOKMARK [1][-]{section.0.7}{Structured Outputs}{}% 10
+\BOOKMARK [1][-]{section.0.8}{Data Types}{}% 11
+\BOOKMARK [1][-]{section.0.9}{Efficient Convolution Algorithms}{}% 12
+\BOOKMARK [1][-]{section.0.10}{Random or Unsupervised Features}{}% 13
+\BOOKMARK [1][-]{section.0.11}{The Neuroscientific Basis for Convolutional Networks}{}% 14

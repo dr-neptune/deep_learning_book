@@ -402,10 +402,10 @@ The entire model can be saved to a file that contains the weight values, model c
 
 ```{r}
 # save entire HDF5 file
-model %>% save_model_hdf5("my_model.h5")
+# model %>% save_model_hdf5("my_model.h5")
 
 # recreate the exact same model, including weights and optimizer
-model <- load_model_hdf5("my_model.h5")
+# model <- load_model_hdf5("my_model.h5")
 ```
 
 #### Eager Execution 
@@ -1208,3 +1208,641 @@ output <- layer_concatenate(c(encoded_video, encoded_video_question)) %>%
 
 video_qa_model <- keras_model(inputs = c(video_input, video_question_input), outputs = output)
 ```
+
+## Keras Models 
+
+Keras supports 3 types of models:
+
+- sequential
+- functional api
+- custom
+
+### Sequential
+
+```{r}
+model <- keras_model_sequential()
+
+model %>%
+    layer_dense(units = 32, input_shape = c(784)) %>%
+    layer_activation('relu') %>%
+    layer_dense(units = 10) %>%
+    layer_activation('softmax')
+```
+
+Note that keras objects are modified in place, which is why assignment is not necessary. 
+
+### Functional
+
+The functional API allows for more complex models, such as multi output models, directed acyclic graphs, and shared layers. To create a model with the functional API compose a set of input and output layers and then pass them to the `keras_model()` function. 
+
+```{r}
+# define two inputs
+tweet_a <- layer_input(shape = c(140, 256))
+tweet_b <- layer_input(shape = c(140, 256))
+
+# take input as a matrix and return a vector of 64 units
+shared_lstm <- layer_lstm(units = 64)
+
+# using the same layer instance multiple times reuses weights
+encoded_a <- tweet_a %>% shared_lstm
+encoded_b <- tweet_b %>% shared_lstm
+
+# concatenate two vectors and add log regression
+predictions <- layer_concatenate(c(encoded_a, encoded_b), axis = -1) %>%
+    layer_dense(units = 1, activation = 'sigmoid')
+
+# define a trainable model linking inputs to predictions
+model <- keras_model(inputs = c(tweet_a, tweet_b), outputs = predictions)
+```
+
+### Custom 
+
+Custom models enable the implementation of custom forward pass logic (i.e. to encapsulte the logic associated with constructing various types of models).
+
+All models share the following properties: 
+
+- model$layers - a flattened list of the layers comprising the model graph 
+- model$inputs - list of input tensors 
+- model$outputs - list of output tensors 
+
+## Layers 
+
+A wide variety of layers are available, including: 
+
+- core layers
+- convolutional layers
+- pooling layers
+- activation layers
+- dropout layers
+- locally connected layers
+- recurrent layers
+- embedding layers
+- normalization layers
+- noise layers 
+- merge layers
+- layer wrappers
+
+## Visualization 
+
+There are a number of tools for visualizing the training of keras models, including: 
+
+- A plot method
+- the RStudio IDE
+- integration with tensorboard 
+  - tensorboard provides other visualizations like: 
+    - the underlying tensorflow graph
+    - gradient histograms
+    - model weights
+  - enables comparison of metrics across multiple training runs
+
+### Plotting History 
+
+The history will be plotted using ggplot2 if available. 
+
+If you want to create a custom visualization, you can call the `as.data.frame()` method on the history to obtain a data frame with factors for each metric as well as training vs validation: 
+
+```{r}
+## history_df <- as.data.frame(history)
+## str(history_df)
+```
+
+### Tensorboard
+
+To record data that can be visualized with tensorboard, we can add a tensorboard callback to the fit() function. For example:
+
+```{r}
+## history <- model %>% fit(
+##                          x_train, y_train,
+##                          batch_size = batch_size,
+##                          epochs = epochs,
+##                          verbose = 1,
+##                          callbacks = callback_tensorboard("logs/run_a"),
+##                          validation_split = 0.2
+##                      )
+```
+
+The the docs on callback_tensorboard() for more info. The important part is the logs directiory. A distinct log direction should be used for each training run. 
+
+#### Viewing Data 
+
+To view tensorboard data for a given set of runs, we use the tensorboard() function, pointing it to the previously specific `log_dir`: 
+
+```{r}
+# tensorboard("logs/run_a")
+```
+
+It is often useful to run tensorboard while we train a model. 
+
+```{r}
+# launch tensorboard
+# tensorboard("logs/run_a")
+
+## # set epochs
+## epochs <- 10
+
+## # fit the model with the tensorboard callback
+## history <- model %>% fit(
+##                          x_train, y_train,
+##                          batch_size = batch_size,
+##                          epochs = epochs,
+##                          verbose = 1,
+##                          callbacks = callback_tensorboard("logs/run_a"),
+##                          validation_split = 0.2
+##                      )
+```
+
+Keras writes tensorboard data at the end of each epoch. 
+
+#### Comparing Runs 
+
+TensorBoard will automatically include all runs logged within the subdirectories of the specified log_dir. 
+
+We can also pass multiple directories: 
+
+```{r}
+# log another run
+# callback_tensorboard(log_dir = "logs/run_b")
+
+# call tensorboard
+# tensorboard("logs")
+
+# multiple log directories
+# tensorboard(c("logs/run_a", "logs/run_b"))
+```
+
+#### Customization 
+
+Metrics: 
+
+The tensorboard callback will log data for any metrics which are specified in the metrics parameter of the compile function. 
+
+```{r}
+# example
+model %>% compile(
+              loss = 'mean_squared_error',
+              optimizer = 'sgd',
+              metrics = c('mae', 'acc')
+          )
+```
+
+tensorboard data series will be created for the loss (mean squared error), as well as for the mean absolute error and accuracy metrics. 
+
+## Pretrained
+
+Keras Applications are deep learning models that are made available alongside pretrained weights. 
+
+The following image classification models are available: 
+
+- xception
+- VGG16
+- VGG19
+- ResNet50
+- InceptionV3
+- InceptionResNetV2
+- MobileNet
+- MobileNetV2
+- DenseNet
+- NASNet
+
+### Usage Examples 
+
+#### Classify Imagenet with ResNet50
+
+```{r}
+## # instantiate the model
+## model <- application_resnet50(weights = 'imagenet')
+
+## # load the image
+## img_path <- "elephant.jpg"
+## img <- image_load(img_path, target_size = c(224, 224))
+## x <- image_to_array(img)
+
+## # ensure we have a 4d tensor with single element in the batch dimension, then preprocess the input for prediction using resnet50
+## x <- array_reshape(x, c(1, dim(x)))
+## x <- imagenet_preprocess_input(x)
+
+## # make predictions then decode and print them
+## preds <- model %>% predict(x)
+## imagenet_decode_predictions(preds, top = 3)[[1]]
+```
+
+#### Extract Features with VGG16
+
+```{r}
+## model <- application_vgg16(weights = 'imagenet', include_top = FALSE)
+
+## img_path <- "elephant.jpg"
+## img <- image_load(img_path, target_size = c(224, 224))
+## x <- image_to_array(img)
+
+## x <- array_reshape(x, c(1, dim(x)))
+## x <- imagenet_preprocess_input(x)
+
+## features <- model %>% predict(x) 
+# imagenet_decode_predictions(features, top = 3)[[1]]
+```
+    
+#### Extract features from an arbitrary intermediate layer with VGG19 
+
+```{r}
+## base_model <- application_vgg19(weights = "imagenet")
+
+## model <- keras_model(inputs = base_model$input,
+##                      outputs = get_layer(base_model, 'block4_pool')$output)
+
+## img_path <- "elephant.jpg"
+## img <- image_load(img_path, target_size = c(224, 224))
+## x <- image_to_array(img)
+## x <- array_reshape(x, c(1, dim(x)))
+## x <- imagenet_preprocess_input(x)
+
+## block4_pool_features <- model %>% predict(x)
+
+## imagenet_decode_predictions(block4_pool_features, top = 3)[[1]]
+```
+
+#### Fine Tune InceptionV3 on a new set of classes
+
+```{r}
+## # create the base pretrained model
+## base_model <- application_inception_v3(weights = 'imagenet', include_top = FALSE)
+
+## # add our custom layers
+## predictions <- base_model$output %>%
+##     layer_global_average_pooling_2d() %>%
+##     layer_dense(units = 1024, activation = 'relu') %>%
+##     layer_dense(units = 200, activation = 'softmax')
+
+## # create training model
+## model <- keras_model(inputs = base_model$input, outputs = predictions)
+
+## # freeze all convolutional inceptionv3 layers
+## freeze_weights(base_model)
+
+## # compile the model
+## model %>% compile(
+##               optimizer = "rmsprop",
+##               loss = "categorical_crossentropy"
+##           )
+
+## # train the model on a few epochs
+## model %>% fit_generator(...)
+
+## # at this point, the top layers are well trained and we can start fine tuning convolutional layers from inception V3. We will freeze the bottom N layers and train the remaining top layers.
+
+## # visualize layer names and indices to see what we should freeze
+## layers <- base_model$layers
+
+## for (i in 1:length(layers)) cat(i, layers[[i]]$name, "\n")
+
+## # train the top 2 inception blocks (freeze first 172 layers)
+## freeze_weights(base_model, from = 1, to = 172)
+## unfreeze_weights(base_model, from = 173)
+
+## # recompile the model for these modifications to take effect
+## model %>% compile(
+##               optimizer = optimizer_sgd(lr = 0.0001, momentum = 0.9),
+##               loss = "categorical_crossentropy"
+##           )
+
+## # train the model again fine tuning the top 2 inception blocks
+## model %>% fit_generator(...)
+```
+
+#### Build InceptionV3 over a custom input tensor 
+
+```{r}
+# this could also be the output to a different keras model or layer
+## input_tensor <- layer_input(shape = c(224, 224, 3))
+
+## model <- application_inception_V3(input_tensor = input_tensor,
+##                                   weights = "imagenet",
+##                                   include_top = TRUE)
+```
+
+## FAQ
+
+### How can I use Keras with datasets that don't fit in memory? 
+
+#### Generator Functions
+
+```{r}
+# simple generator function example
+## sampling_generator <- function(x_data, y_data, batch_size) {
+##     function() {
+##         rows <- sample(1:nrow(x_data), batch_size, replace = TRUE)
+##         list(x_data[rows, ], y_data[rows,])
+##     }
+## }
+
+## model %>%
+##     fit_generator(sampling_generator(x_train, y_train, batch_size = 128),
+##                   steps_per_epoch = nrow(x_train) / 128, epochs = 10)
+```
+
+The `steps_per_epoch` parameter indicates the number of steps (batches of samples) to yield from the generator before declaring one epoch finished and starting the next epoch. It should typically be equal to the number of unique samples if your dataset is divided by the batch size. 
+
+#### External Data Generators 
+
+The above example doesn't address the use case of datasets that don't fit in memory. Typically, to do that we will need to write a generator that reads from another source (e.g. a sparse matrix or files on disk) and maintains an offset into that data as its called repeatedly. 
+
+For example, suppose we have a set of text files we wish to read from: 
+
+```{r}
+data_files_generator <- function(dir) {
+    files <- list.files(dir)
+    next_file <- 0
+
+    function() {
+        # move to the next file (note <<- scoping assignment)
+        next_file <<- next_file + 1
+
+        # if all files exhausted start at beginning
+        # keras generators need to yield indefinitely
+        # termination is controlled by the epochs / steps_per_epoch
+        if (next_file > length(files)){
+            next_file <<- 1
+        }
+        
+        # determine the file name
+        file <- files[[next_file]]
+
+        # process and return the data in the file
+        # in a real example subdivide the data within the file into appropriately sized training batches.
+        file_to_training_data(file)
+    }
+}
+```
+
+The above code is an example of a stateful generator - the function maintains information across calls to keep track of which data to provide next. 
+
+#### Image Generators 
+
+We can also use the
+
+- `flow_images_from_directory`
+- `flow_images_from_data`
+
+functions along with `fit_generator` for training on sets of images stored on disk (with optional image augmentation / normalization via `image_data_generator`). 
+
+We can see batch image training in action in the [cifar10 example](https://keras.rstudio.com/articles/examples/cifar10_cnn.html). 
+
+#### Batch Functions 
+
+We can also use the `train_on_batch` and `test_on_batch` functions, which enable us to write training loops that read into memory only the data required for each batch. 
+
+### Interrupt Training
+
+We can use early stopping callbacks to interrupt training when the validation loss isn't decreasing anymore. 
+
+```{r}
+early_stopping <- callback_early_stopping(monitor = 'val_loss', patience = 2)
+
+# model %>% fit(x, y, validation_split = 0.2, callbacks = c(early_stopping))
+```
+
+### Freezing Layers
+
+To freeze a layer means to exlude it from training, i.e. its weights will never be updated. This is useful in the context of fine tuning a model, or using fixed embedings for a text input. 
+
+```{r}
+## # pass a trainable arg to a layer constructor
+## frozen_layer <- layer_dense(units = 32, trainable = FALSE)
+
+## # OR set the trainable property after instantiation
+## x <- layer_input(shape = c(32))
+## layer <- layer_dense(units = 32)
+## layer$trainable <- FALSE
+## y <- x %>% layer
+
+## frozen_model <- keras_model(x, y)
+## frozen_model %>% compile(optimizer = "rmsprop", loss = "mse")
+
+## layer$trainable <- TRUE
+## trainable_model <- keras_model(x, y)
+## trainable_model %>% compile(optimizer = "rmsprop", loss = "mse")
+
+## frozen_model %>% fit(data, labels) # don't update weights
+## trainable_model %>% fit(data, labels) # this does update weights
+```
+
+We can freeze or unfreeze the weights for an entire model using the `freeze_weights` and `unfreeze_weights` functions. For example: 
+
+```{r}
+# instantiate a VGG16 model
+conv_base <- application_vgg16(
+    weights = "imagenet",
+    include_top = FALSE,
+    input_shape = c(150, 150, 3)
+)
+
+# freeze its weights
+freeze_weights(conv_base)
+
+# create a composite model with base + more layers
+model <- keras_model_sequential() %>%
+    conv_base %>%
+    layer_flatten() %>%
+    layer_dense(units = 256, activation = "relu") %>%
+    layer_dense(units = 1, activation = "sigmoid")
+
+# compile
+model %>% compile(
+              loss = "binary_crossentropy",
+              optimizer = optimizer_rmsprop(lr = 2e-5),
+              metrics = c("accuracy")
+          )
+
+# unfreeze weights from block5_conv1 on
+unfreeze_weights(conv_base, from = "block5_conv1")
+
+# compile again since we froze or unfroze layers
+model %>% compile(
+              loss = "binary_crossentropy",
+              optimizer = optimizer_rmsprop(lr = 2e-5),
+              metrics = c("accuracy")
+          )
+```
+
+### Stateful RNNs
+Making a RNN stateful means that the states for the samples of each batch will be reused as initial states for the samples in the next batch. 
+
+When using stateful RNNs, it is assumed that: 
+
+- all batches have the same number of samples 
+- If x1 and x2 are successive batches of samples, then x2[[i]] is the follow up sequence to x1[[i]] for every i
+
+To use statefulness in RNNs, we must:
+
+- explicitly specify the batch size we are using, by passing a batch size argument to the first layer in our model, e.g. `batch_size = 32` for a 32 samples batch of 10 timesteps with 16 features per timestep. 
+- set `stateful = TRUE` in our RNN layer 
+- specify `shuffle = FALSE` when calling fit 
+
+To reset the states accumulated in either a single layer or an entire model use the `reset_states()` function. 
+
+### Remove a Layer
+
+We can remove the last added layer in a sequential model by calling `pop_layer`
+
+```{r}
+model <- keras_model_sequential()
+
+model %>%
+    layer_dense(units = 32, activation = "relu", input_shape = c(784)) %>%
+    layer_dense(units = 32, activation = "relu") %>%
+    layer_dense(units = 32, activation = "relu")
+
+length(model$layers)
+
+model %>% pop_layer()
+
+length(model$layers)
+```
+
+### Pretrained Models 
+
+Code and pre-trained weights are available for the following image classification models: 
+
+Xception
+VGG16
+VGG19
+ResNet50
+InceptionV3
+InceptionResNetV2
+MobileNet
+MobileNetV2
+DenseNet
+NASNet
+
+### Accessing the underlying python
+
+```{r}
+# keras python module
+keras <- NULL
+
+# obtain a reference to the module from the keras R package
+.onLoad <- function(libname, pkgname) {
+    keras <<- keras::implementation()
+}
+```
+
+### Reproducibility 
+
+The `use_session_with_seed` function establishes a common random seed for R, python, numpy, and tensorflow. It furthermore disables hash randomization, GPU computations, and CPU parallelization, which can be additional sources of non-reproducibility.
+
+```{r}
+# call directly after loading package
+# library(keras)
+# use_session_with_seed(88)
+
+# or don't disable GPU or CPU parallelization
+# use_session_with_seed(888, disable_gpu = FALSE, disable_parallel_cpu = FALSE)
+```
+
+### Deployability 
+
+On iOS, via Apple’s CoreML (Keras support officially provided by Apple)
+On Android, via the TensorFlow Android runtime. Example: Not Hotdog app
+In the browser, via GPU-accelerated JavaScript runtimes such as Keras.js and WebDNN
+On Google Cloud, via TensorFlow-Serving
+In an R or Python webapp backend (such as a Shiny or Flask app)
+
+## Eager 
+
+Eager execution is a way to train a keras model without building a graph. Operations return values, not tensors. Consequently, we can inspect what goes in and comes out of an operation by simply printing a variable's contents. 
+
+
+```{r}
+library(keras)
+library(tensorflow)
+tfe_enable_eager_execution(device_policy = "silent")
+
+# check if we are using eager execution
+tf$executing_eagerly()
+```
+
+### Define a Model
+
+Models for use with eager execution are defined as Keras custom models. 
+
+```{r}
+# model instantiator
+iris_regression_model <- function(name = NULL) {
+    keras_model_custom(name = name, function(self) {
+        # define any number of layers here
+        self$dense1 <- layer_dense(units = 32)
+        self$dropout <- layer_dropout(rate = 0.5)
+        self$dense2 <- layer_dense(units = 1)
+
+        # this is the call fn that defines what happens when the model is called
+        function(x, mask = NULL) {
+            x %>%
+                self$dense1() %>%
+                self$dropout() %>%
+                self$dense2()
+        }
+    })
+}
+
+# create the model by instantiation via its wrapper
+model <- iris_regression_model()
+
+# call the model on dummy data even though its weights are still unknown
+model(k_constant(matrix(1:6, nrow = 2, ncol = 3)))
+
+# inspect the models weights
+model$weights
+```
+
+### Losses and Optimizers 
+
+An appropriate loss function for regression is the mean squared error 
+
+```{r}
+mse_loss <- function(y_true, y_pred, x) {
+    # its reqd to use a TF function here
+    mse <- tf$losses$mean_squared_error(y_true, y_pred)
+
+    # here we could compute and add other losses
+    mse
+}
+
+# in the same view, we need an optimizer from the tf$train module
+optimizer <- tf$train$AdamOptimizer()
+```
+
+### Use tfdatasets to feed the data 
+
+In eager execution we use tfdatasets to stream input and target data to the model. In this example, we use `tensor_slices_dataset` to directly create a dataset from the underlying R matrices x_train and y_train. 
+
+A wide variety of other dataset creation functions are available: [dataset creation](https://tensorflow.rstudio.com/tools/tfdatasets/reference/#section-creating-datasets)
+
+Datasets also allow for a variety of preprocessing operations:
+
+```{r}
+x_train <- iris[1:120, c("Petal.Length", "Sepal.Length", "Petal.Width")] %>%
+    as.matrix()
+y_train <- iris[1:120, c("Sepal.Width")] %>% as.matrix()
+
+# convert to appropriate tensor floats type for backend
+x_train <- k_constant(x_train)
+y_train <- k_constant(y_train)
+
+# same for test
+x_test <- iris[121:150, c("Petal.Length", "Sepal.Length", "Petal.Width")] %>% as.matrix()
+y_test <- iris[121:150, c("Sepal.Width")] %>% as.matrix()
+x_test <- k_constant(x_test)
+y_test <- k_constant(y_test)
+
+library(tfdatasets)
+
+train_dataset <- tensor_slices_dataset(list(x_train, y_train)) %>%
+    dataset_batch(10)
+test_dataset <- tensor_slices_dataset(list(x_train, y_train)) %>%
+    dataset_batch(10)
+
+
+```
+
+## Callbacks
+
