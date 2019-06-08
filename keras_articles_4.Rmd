@@ -1,0 +1,671 @@
+---
+title: "Keras Articles <img src=\"Keras_Logo.jpg\" style=\"float: right; width: 80px;\"/>"
+author: "Michael Rose"
+output: 
+  html_document:
+     highlight: zenburn
+     theme: lumen
+     df_print: paged
+     fig_align: center
+     code_folding: hide
+---
+
+```{r, echo = FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, out.width = "100%")
+
+# programming 
+library(tensorflow)
+library(keras)
+```
+
+# {.tabset}
+
+## Intro
+
+This is a work-through of the tutorials on the [Keras Homepage for R](https://keras.rstudio.com/index.html).
+
+## Basics 
+ 
+### Check GPU Availability
+
+```{r}
+K = backend()
+sess = K$get_session()
+sess$list_devices()
+```
+
+
+
+## FAQ
+
+### How can I use Keras with datasets that don't fit in memory? 
+
+#### Generator Functions
+
+```{r}
+# simple generator function example
+## sampling_generator <- function(x_data, y_data, batch_size) {
+##     function() {
+##         rows <- sample(1:nrow(x_data), batch_size, replace = TRUE)
+##         list(x_data[rows, ], y_data[rows,])
+##     }
+## }
+
+## model %>%
+##     fit_generator(sampling_generator(x_train, y_train, batch_size = 128),
+##                   steps_per_epoch = nrow(x_train) / 128, epochs = 10)
+```
+
+The `steps_per_epoch` parameter indicates the number of steps (batches of samples) to yield from the generator before declaring one epoch finished and starting the next epoch. It should typically be equal to the number of unique samples if your dataset is divided by the batch size. 
+
+#### External Data Generators 
+
+The above example doesn't address the use case of datasets that don't fit in memory. Typically, to do that we will need to write a generator that reads from another source (e.g. a sparse matrix or files on disk) and maintains an offset into that data as its called repeatedly. 
+
+For example, suppose we have a set of text files we wish to read from: 
+
+```{r}
+data_files_generator <- function(dir) {
+    files <- list.files(dir)
+    next_file <- 0
+
+    function() {
+        # move to the next file (note <<- scoping assignment)
+        next_file <<- next_file + 1
+
+        # if all files exhausted start at beginning
+        # keras generators need to yield indefinitely
+        # termination is controlled by the epochs / steps_per_epoch
+        if (next_file > length(files)){
+            next_file <<- 1
+        }
+        
+        # determine the file name
+        file <- files[[next_file]]
+
+        # process and return the data in the file
+        # in a real example subdivide the data within the file into appropriately sized training batches.
+        file_to_training_data(file)
+    }
+}
+```
+
+The above code is an example of a stateful generator - the function maintains information across calls to keep track of which data to provide next. 
+
+#### Image Generators 
+
+We can also use the
+
+- `flow_images_from_directory`
+- `flow_images_from_data`
+
+functions along with `fit_generator` for training on sets of images stored on disk (with optional image augmentation / normalization via `image_data_generator`). 
+
+We can see batch image training in action in the [cifar10 example](https://keras.rstudio.com/articles/examples/cifar10_cnn.html). 
+
+#### Batch Functions 
+
+We can also use the `train_on_batch` and `test_on_batch` functions, which enable us to write training loops that read into memory only the data required for each batch. 
+
+### Interrupt Training
+
+We can use early stopping callbacks to interrupt training when the validation loss isn't decreasing anymore. 
+
+```{r}
+early_stopping <- callback_early_stopping(monitor = 'val_loss', patience = 2)
+
+# model %>% fit(x, y, validation_split = 0.2, callbacks = c(early_stopping))
+```
+
+### Freezing Layers
+
+To freeze a layer means to exlude it from training, i.e. its weights will never be updated. This is useful in the context of fine tuning a model, or using fixed embedings for a text input. 
+
+```{r}
+## # pass a trainable arg to a layer constructor
+## frozen_layer <- layer_dense(units = 32, trainable = FALSE)
+
+## # OR set the trainable property after instantiation
+## x <- layer_input(shape = c(32))
+## layer <- layer_dense(units = 32)
+## layer$trainable <- FALSE
+## y <- x %>% layer
+
+## frozen_model <- keras_model(x, y)
+## frozen_model %>% compile(optimizer = "rmsprop", loss = "mse")
+
+## layer$trainable <- TRUE
+## trainable_model <- keras_model(x, y)
+## trainable_model %>% compile(optimizer = "rmsprop", loss = "mse")
+
+## frozen_model %>% fit(data, labels) # don't update weights
+## trainable_model %>% fit(data, labels) # this does update weights
+```
+
+We can freeze or unfreeze the weights for an entire model using the `freeze_weights` and `unfreeze_weights` functions. For example: 
+
+```{r}
+# instantiate a VGG16 model
+conv_base <- application_vgg16(
+    weights = "imagenet",
+    include_top = FALSE,
+    input_shape = c(150, 150, 3)
+)
+
+# freeze its weights
+freeze_weights(conv_base)
+
+# create a composite model with base + more layers
+model <- keras_model_sequential() %>%
+    conv_base %>%
+    layer_flatten() %>%
+    layer_dense(units = 256, activation = "relu") %>%
+    layer_dense(units = 1, activation = "sigmoid")
+
+# compile
+model %>% compile(
+              loss = "binary_crossentropy",
+              optimizer = optimizer_rmsprop(lr = 2e-5),
+              metrics = c("accuracy")
+          )
+
+# unfreeze weights from block5_conv1 on
+unfreeze_weights(conv_base, from = "block5_conv1")
+
+# compile again since we froze or unfroze layers
+model %>% compile(
+              loss = "binary_crossentropy",
+              optimizer = optimizer_rmsprop(lr = 2e-5),
+              metrics = c("accuracy")
+          )
+```
+
+### Stateful RNNs
+Making a RNN stateful means that the states for the samples of each batch will be reused as initial states for the samples in the next batch. 
+
+When using stateful RNNs, it is assumed that: 
+
+- all batches have the same number of samples 
+- If x1 and x2 are successive batches of samples, then x2[[i]] is the follow up sequence to x1[[i]] for every i
+
+To use statefulness in RNNs, we must:
+
+- explicitly specify the batch size we are using, by passing a batch size argument to the first layer in our model, e.g. `batch_size = 32` for a 32 samples batch of 10 timesteps with 16 features per timestep. 
+- set `stateful = TRUE` in our RNN layer 
+- specify `shuffle = FALSE` when calling fit 
+
+To reset the states accumulated in either a single layer or an entire model use the `reset_states()` function. 
+
+### Remove a Layer
+
+We can remove the last added layer in a sequential model by calling `pop_layer`
+
+```{r}
+model <- keras_model_sequential()
+
+model %>%
+    layer_dense(units = 32, activation = "relu", input_shape = c(784)) %>%
+    layer_dense(units = 32, activation = "relu") %>%
+    layer_dense(units = 32, activation = "relu")
+
+length(model$layers)
+
+model %>% pop_layer()
+
+length(model$layers)
+```
+
+### Pretrained Models 
+
+Code and pre-trained weights are available for the following image classification models: 
+
+Xception
+VGG16
+VGG19
+ResNet50
+InceptionV3
+InceptionResNetV2
+MobileNet
+MobileNetV2
+DenseNet
+NASNet
+
+### Accessing the underlying python
+
+```{r}
+# keras python module
+keras <- NULL
+
+# obtain a reference to the module from the keras R package
+.onLoad <- function(libname, pkgname) {
+    keras <<- keras::implementation()
+}
+```
+
+### Reproducibility 
+
+The `use_session_with_seed` function establishes a common random seed for R, python, numpy, and tensorflow. It furthermore disables hash randomization, GPU computations, and CPU parallelization, which can be additional sources of non-reproducibility.
+
+```{r}
+# call directly after loading package
+# library(keras)
+# use_session_with_seed(88)
+
+# or don't disable GPU or CPU parallelization
+# use_session_with_seed(888, disable_gpu = FALSE, disable_parallel_cpu = FALSE)
+```
+
+### Deployability 
+
+On iOS, via Apple’s CoreML (Keras support officially provided by Apple)
+On Android, via the TensorFlow Android runtime. Example: Not Hotdog app
+In the browser, via GPU-accelerated JavaScript runtimes such as Keras.js and WebDNN
+On Google Cloud, via TensorFlow-Serving
+In an R or Python webapp backend (such as a Shiny or Flask app)
+
+## Eager 
+
+Eager execution is a way to train a keras model without building a graph. Operations return values, not tensors. Consequently, we can inspect what goes in and comes out of an operation by simply printing a variable's contents. 
+
+
+```{r}
+library(keras)
+library(tensorflow)
+# tfe_enable_eager_execution(device_policy = "silent")
+
+# check if we are using eager execution
+# tf$executing_eagerly()
+```
+
+### Define a Model
+
+Models for use with eager execution are defined as Keras custom models. 
+
+```{r}
+# model instantiator
+## iris_regression_model <- function(name = NULL) {
+##     keras_model_custom(name = name, function(self) {
+##         # define any number of layers here
+##         self$dense1 <- layer_dense(units = 32)
+##         self$dropout <- layer_dropout(rate = 0.5)
+##         self$dense2 <- layer_dense(units = 1)
+
+##         # this is the call fn that defines what happens when the model is called
+##         function(x, mask = NULL) {
+##             x %>%
+##                 self$dense1() %>%
+##                 self$dropout() %>%
+##                 self$dense2()
+##         }
+##     })
+## }
+
+## # create the model by instantiation via its wrapper
+## model <- iris_regression_model()
+
+## # call the model on dummy data even though its weights are still unknown
+## model(k_constant(matrix(1:6, nrow = 2, ncol = 3)))
+
+## # inspect the models weights
+## model$weights
+```
+
+### Losses and Optimizers 
+
+An appropriate loss function for regression is the mean squared error 
+
+```{r}
+## mse_loss <- function(y_true, y_pred, x) {
+##     # its reqd to use a TF function here
+##     mse <- tf$losses$mean_squared_error(y_true, y_pred)
+
+##     # here we could compute and add other losses
+##     mse
+## }
+
+## # in the same view, we need an optimizer from the tf$train module
+## optimizer <- tf$train$AdamOptimizer()
+```
+
+### Use tfdatasets to feed the data 
+
+In eager execution we use tfdatasets to stream input and target data to the model. In this example, we use `tensor_slices_dataset` to directly create a dataset from the underlying R matrices x_train and y_train. 
+
+A wide variety of other dataset creation functions are available: [dataset creation](https://tensorflow.rstudio.com/tools/tfdatasets/reference/#section-creating-datasets)
+
+Datasets also allow for a variety of preprocessing operations:
+
+```{r}
+## x_train <- iris[1:120, c("Petal.Length", "Sepal.Length", "Petal.Width")] %>%
+##     as.matrix()
+## y_train <- iris[1:120, c("Sepal.Width")] %>% as.matrix()
+
+## # same for test
+## x_test <- iris[121:150, c("Petal.Length", "Sepal.Length", "Petal.Width")] %>% as.matrix()
+## y_test <- iris[121:150, c("Sepal.Width")] %>% as.matrix()
+## x_test <- k_constant(x_test)
+## y_test <- k_constant(y_test)
+
+## library(tfdatasets)
+
+## train_dataset <- tensor_slices_dataset(list(x_train, y_train)) %>%
+##     dataset_batch(10)
+## test_dataset <- tensor_slices_dataset(list(x_train, y_train)) %>%
+##     dataset_batch(10)
+
+## # data is accessed via `make_iterator_one_shot` to create iterator and `iterator_get_next` to obtain the next batch
+## iter <- make_iterator_one_shot(train_dataset)
+## batch <- iterator_get_next(iter)
+```
+
+Datasets are available in non-eager (graph) execution as well, but in eager mode we can examine the actual values returned from the iterator. 
+
+```{r}
+# batch
+```
+
+### Training Loop 
+
+With eager execution, we take full control over the training process. 
+
+Generally, we have at least two loops: an outer loop over epochs, and an inner loop over batches of data returned by the iterator. The iterator is created at the start of each new epoch.
+
+
+To fill in the pieces of the loop, we will see that: 
+
+- Forward propagation is simply a call to `model()`
+- This call must happen inside the context of a `GradientTape` that records all operations
+- Loss is calculated using the loss function defined before 
+- From the loss on the one hand the the models current weights on the other hand, `GradientTape` determines the gradients 
+- Finally, the optimizer applies the gradients to the weights in its algorithm specific way 
+
+```{r}
+## n_epochs <- 10
+
+## # loop over epochs
+## for (i in seq_len(n_epochs)) {
+  
+##   # create fresh iterator from dataset
+##   iter <- make_iterator_one_shot(train_dataset)
+  
+##   # accumulate current epoch's loss (for display purposes only)
+##   total_loss <- 0
+  
+##   # loop once through the dataset
+##   until_out_of_range({
+    
+##     # get next batch
+##     batch <-  iterator_get_next(iter)
+##     x <- batch[[1]]
+##     y <- batch[[2]]
+    
+##     # forward pass is recorded by tf$GradientTape
+##     with(tf$GradientTape() %as% tape, {
+     
+##       # run model on current batch
+##       preds <- model(x)
+     
+##       # compute the loss
+##       loss <- mse_loss(y, preds, x)
+##     })
+    
+##     # update total loss
+##     total_loss <- total_loss + loss
+    
+##     # get gradients of loss w.r.t. model weights
+##     gradients <- tape$gradient(loss, model$variables)
+    
+##     # update model weights
+##     optimizer$apply_gradients(
+##       purrr::transpose(list(gradients, model$variables)),
+##       global_step = tf$train$get_or_create_global_step()
+##     )
+
+##   })
+  
+##   cat("Total loss (epoch): ", i, ": ", as.numeric(total_loss), "\n")
+## }
+```
+
+### Predictions on the Test Set
+
+Getting predictions on the test set is just a call to model, just like training has been
+
+```{r}
+# model(x_test)
+```
+
+### Saving and Restoring Model Weights 
+
+To save model weights, create an instance of `tf$Checkpoint` and pass it the objects to be saved. This has to happen after the respective objects have been created, but before the training loop. 
+
+```{r}
+## checkpoint_dir <- "./checkpoints/"
+## checkpoint_prefix <- file.path(checkpoint_dir, "ckpt")
+## checkpoint <- tf$train$Checkpoint(
+##                            optimizer = optimizer,
+##                            model = model
+##                        )
+```
+
+Then at the end of each epoch we save the model's current weights like so: 
+
+```{r}
+# checkpoint$save(file_prefix = checkpoint_prefix)
+```
+
+This call saves the weights only, not the complete graph. Thus, on restore, we recreate all components in the same way as above and then load saved model weights using
+
+```{r}
+# restore from recent checkpoint
+# checkpoint$restore(tf$train$latest_checkpoint(checkpoint_dir))
+```
+
+We can then obtain predictions from the restored model, on the test set as a whole or batch wise using an iterator.
+
+```{r}
+## model(x_test)
+
+## iter <- make_iterator_one_shot(test_dataset)
+## until_out_of_range({
+##     batch <- iterator_get_next(iter)
+##     preds <- model(batch[[1]])
+##     print(preds)
+## })
+```
+
+### Complete Example 
+
+```{r}
+## # Prepare training and test sets
+## x_train <-
+##   iris[1:120, c("Petal.Length", "Sepal.Length", "Petal.Width")] %>% as.matrix()
+## x_train <- k_constant(x_train)
+## y_train <-
+##   iris[1:120, c("Sepal.Width")] %>% as.matrix()
+## y_train <- k_constant(y_train)
+
+## x_test <-
+##   iris[121:150, c("Petal.Length", "Sepal.Length", "Petal.Width")] %>% as.matrix()
+## x_test <- k_constant(x_test)
+## y_test <-
+##   iris[121:150, c("Sepal.Width")] %>% as.matrix()
+## y_test <- k_constant(y_test)
+
+
+
+## # Create datasets for training and testing
+
+## train_dataset <- tensor_slices_dataset(list (x_train, y_train)) %>%
+##   dataset_batch(10)
+## test_dataset <- tensor_slices_dataset(list (x_test, y_test)) %>%
+##   dataset_batch(10)
+
+
+## # Create model
+## iris_regression_model <- function(name = NULL) {
+##     keras_model_custom(name = name, function(self) {
+##         self$dense1 <- layer_dense(units = 32, input_shape = 3)
+##         self$dropout <- layer_dropout(rate = 0.5)
+##         self$dense2 <- layer_dense(units = 1)
+
+##         function(x, mask = NULL) {
+##             self$dense1(x) %>%
+##                 self$dropout() %>%
+##                 self$dense2()
+##         }
+##     })
+## }
+
+## model <- iris_regression_model()
+
+## # define loss function and optimizer
+## mse_loss <- function(y_true, y_pred, x) {
+##     mse <- tf$losses$mean_squared_error(y_true, y_pred)
+##     mse
+## }
+
+## optimizer <- tf$train$AdamOptimizer()
+
+## # set up checkpointing
+## checkpoint_dir <- "./checkpoints"
+## checkpoint_prefix <- file.path(checkpoint_dir, "ckpt")
+## checkpoint <- tf$train$Checkpoint(optimizer = optimizer,
+##                                   model = model)
+
+## n_epochs <- 10
+
+## # change to TRUE if we want to restore weights
+## restore <- FALSE
+
+## if (!restore) {
+##     for (i in seq_len(n_epochs)) {
+##         iter <- make_iterator_one_shot(train_dataset)
+##         total_loss <- 0
+
+##         until_out_of_range({
+##             batch <- iterator_get_next(iter)
+##             x <- batch[[1]]
+##             y <- batch[[2]]
+
+##             with(tf$GradientTape() %as% tape, {
+##                 preds <- model(x)
+##                 loss <- mse_loss(y, preds, x)
+##             })
+
+##             total_loss <- total_loss + loss
+##             gradients <- tape$gradient(loss, model$variables)
+
+##             optimizer$apply_gradients(purrr::transpose(list(gradients, model$variables)),
+##                                       global_step = tf$train$get_or_create_global_step())
+##         })
+
+##         cat("Total loss (epoch): ", i, ": ", as.numeric(total_loss), "\n")
+
+##         checkpoint$save(file_prefix = checkpoint_prefix)
+##     }
+## } else {
+##     checkpoint$restore(tf$train$latest_checkpoint(checkpoint_dir))
+## }
+
+## # get model predictions on test set
+## model(x_test)
+
+## iter <- make_iterator_one_shot(test_dataset)
+
+## until_out_of_range({
+##     batch <- iterator_get_next(iter)
+##     preds <- model(batch[[1]])
+##     print(preds)
+## })
+```
+
+## Callbacks 
+
+A callback is a set of functions to be applied at given stages of the training procedure. We can use them to get a view on internal states and statistics of the model during training. We can pass a list of callbacks to the fit function. The relevant methods of the callbacks will then be called at each stage of the training.
+
+For example: 
+
+```{r}
+# generate dummy training data
+data <- matrix(rexp(1000 * 784), nrow = 1000, ncol = 784)
+labels <- matrix(round(runif(1000 * 10, min = 0, max = 9)), nrow = 1000, ncol = 10)
+
+# create model
+model <- keras_model_sequential()
+
+# add layers and compile
+model %>%
+    layer_dense(32, input_shape = c(784)) %>%
+    layer_activation("relu") %>%
+    layer_dense(10) %>%
+    layer_activation("softmax") %>%
+    compile(
+        loss = "binary_crossentropy",
+        optimizer = optimizer_sgd(),
+        metrics = "accuracy"
+    )
+
+# fit with callbacks
+model %>% fit(data, labels,
+              callbacks = list(
+                  callback_model_checkpoint("checkpoints.h5"),
+                  callback_reduce_lr_on_plateau(monitor = "loss", factor = 0.1)
+              )
+              )
+```
+    
+The following builtin callbacks are available (prefaced by callback_): 
+
+- progbar_logger() : prints metrics to stdout
+- model_checkpoint() : save model after each epoch
+- early_stopping() : stop when a monitored quantity stops improving 
+- remote_monitor() : stream events to a server 
+- learning_rate_scheduler() : learning rate scheduler 
+- tensorboard() : tensorboard visualizations 
+- reduce_lr_on_plateau() : reduce learning rate when a metric has stopped improving 
+- csv_logger() : stream epoch results to a csv file 
+- lambda() : create a custom callback
+  
+### Custom Callbacks 
+
+We can create a custom callback by creating a new R6 class that inherits from the KerasCallback class. 
+
+Here is a simple example that saves a list of losses over each batch during training. 
+
+```{r}
+# define custom callback class
+LossHistory <- R6::R6Class("LossHistory",
+                           inherit = KerasCallback,
+                           public = list(
+                               losses = NULL,
+                               on_batch_end = function(batch, logs = list()) {
+                                   self$losses <- c(self$losses, logs[["loss"]])
+                               }
+                           ))
+
+# define model
+model <- keras_model_sequential()
+
+# add layers and compile
+model %>%
+    layer_dense(units = 10, input_shape = c(784)) %>%
+    layer_activation(activation = "softmax") %>%
+    compile(
+        loss = "categorical_crossentropy",
+        optimizer = "rmsprop"
+    )
+
+# create history callback object and use it during training
+history <- LossHistory$new()
+
+model %>% fit(
+              data, labels,
+              batch_size = 128,
+              epochs = 20,
+              verbose = 0,
+              callbacks = list(history)
+          )
+
+history$losses %>% head()
+```

@@ -1,0 +1,347 @@
+---
+title: "Keras Articles <img src=\"Keras_Logo.jpg\" style=\"float: right; width: 80px;\"/>"
+author: "Michael Rose"
+output: 
+  html_document:
+     highlight: zenburn
+     theme: lumen
+     df_print: paged
+     fig_align: center
+     code_folding: hide
+---
+
+```{r, echo = FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, out.width = "100%")
+
+# programming 
+library(tensorflow)
+library(keras)
+```
+
+# {.tabset}
+
+## Intro
+
+This is a work-through of the tutorials on the [Keras Homepage for R](https://keras.rstudio.com/index.html).
+
+## Basics 
+ 
+### Check GPU Availability
+
+```{r}
+K = backend()
+sess = K$get_session()
+sess$list_devices()
+```
+
+## Keras Models 
+
+Keras supports 3 types of models:
+
+- sequential
+- functional api
+- custom
+
+### Sequential
+
+```{r}
+model <- keras_model_sequential()
+
+model %>%
+    layer_dense(units = 32, input_shape = c(784)) %>%
+    layer_activation('relu') %>%
+    layer_dense(units = 10) %>%
+    layer_activation('softmax')
+```
+
+Note that keras objects are modified in place, which is why assignment is not necessary. 
+
+### Functional
+
+The functional API allows for more complex models, such as multi output models, directed acyclic graphs, and shared layers. To create a model with the functional API compose a set of input and output layers and then pass them to the `keras_model()` function. 
+
+```{r}
+# define two inputs
+tweet_a <- layer_input(shape = c(140, 256))
+tweet_b <- layer_input(shape = c(140, 256))
+
+# take input as a matrix and return a vector of 64 units
+shared_lstm <- layer_lstm(units = 64)
+
+# using the same layer instance multiple times reuses weights
+encoded_a <- tweet_a %>% shared_lstm
+encoded_b <- tweet_b %>% shared_lstm
+
+# concatenate two vectors and add log regression
+predictions <- layer_concatenate(c(encoded_a, encoded_b), axis = -1) %>%
+    layer_dense(units = 1, activation = 'sigmoid')
+
+# define a trainable model linking inputs to predictions
+model <- keras_model(inputs = c(tweet_a, tweet_b), outputs = predictions)
+```
+
+### Custom 
+
+Custom models enable the implementation of custom forward pass logic (i.e. to encapsulte the logic associated with constructing various types of models).
+
+All models share the following properties: 
+
+- model$layers - a flattened list of the layers comprising the model graph 
+- model$inputs - list of input tensors 
+- model$outputs - list of output tensors 
+
+## Layers 
+
+A wide variety of layers are available, including: 
+
+- core layers
+- convolutional layers
+- pooling layers
+- activation layers
+- dropout layers
+- locally connected layers
+- recurrent layers
+- embedding layers
+- normalization layers
+- noise layers 
+- merge layers
+- layer wrappers
+
+## Visualization 
+
+There are a number of tools for visualizing the training of keras models, including: 
+
+- A plot method
+- the RStudio IDE
+- integration with tensorboard 
+  - tensorboard provides other visualizations like: 
+    - the underlying tensorflow graph
+    - gradient histograms
+    - model weights
+  - enables comparison of metrics across multiple training runs
+
+### Plotting History 
+
+The history will be plotted using ggplot2 if available. 
+
+If you want to create a custom visualization, you can call the `as.data.frame()` method on the history to obtain a data frame with factors for each metric as well as training vs validation: 
+
+```{r}
+## history_df <- as.data.frame(history)
+## str(history_df)
+```
+
+### Tensorboard
+
+To record data that can be visualized with tensorboard, we can add a tensorboard callback to the fit() function. For example:
+
+```{r}
+## history <- model %>% fit(
+##                          x_train, y_train,
+##                          batch_size = batch_size,
+##                          epochs = epochs,
+##                          verbose = 1,
+##                          callbacks = callback_tensorboard("logs/run_a"),
+##                          validation_split = 0.2
+##                      )
+```
+
+The the docs on callback_tensorboard() for more info. The important part is the logs directiory. A distinct log direction should be used for each training run. 
+
+#### Viewing Data 
+
+To view tensorboard data for a given set of runs, we use the tensorboard() function, pointing it to the previously specific `log_dir`: 
+
+```{r}
+# tensorboard("logs/run_a")
+```
+
+It is often useful to run tensorboard while we train a model. 
+
+```{r}
+# launch tensorboard
+# tensorboard("logs/run_a")
+
+## # set epochs
+## epochs <- 10
+
+## # fit the model with the tensorboard callback
+## history <- model %>% fit(
+##                          x_train, y_train,
+##                          batch_size = batch_size,
+##                          epochs = epochs,
+##                          verbose = 1,
+##                          callbacks = callback_tensorboard("logs/run_a"),
+##                          validation_split = 0.2
+##                      )
+```
+
+Keras writes tensorboard data at the end of each epoch. 
+
+#### Comparing Runs 
+
+TensorBoard will automatically include all runs logged within the subdirectories of the specified log_dir. 
+
+We can also pass multiple directories: 
+
+```{r}
+# log another run
+# callback_tensorboard(log_dir = "logs/run_b")
+
+# call tensorboard
+# tensorboard("logs")
+
+# multiple log directories
+# tensorboard(c("logs/run_a", "logs/run_b"))
+```
+
+#### Customization 
+
+Metrics: 
+
+The tensorboard callback will log data for any metrics which are specified in the metrics parameter of the compile function. 
+
+```{r}
+# example
+model %>% compile(
+              loss = 'mean_squared_error',
+              optimizer = 'sgd',
+              metrics = c('mae', 'acc')
+          )
+```
+
+tensorboard data series will be created for the loss (mean squared error), as well as for the mean absolute error and accuracy metrics. 
+
+## Pretrained
+
+Keras Applications are deep learning models that are made available alongside pretrained weights. 
+
+The following image classification models are available: 
+
+- xception
+- VGG16
+- VGG19
+- ResNet50
+- InceptionV3
+- InceptionResNetV2
+- MobileNet
+- MobileNetV2
+- DenseNet
+- NASNet
+
+### Usage Examples 
+
+#### Classify Imagenet with ResNet50
+
+```{r}
+## # instantiate the model
+## model <- application_resnet50(weights = 'imagenet')
+
+## # load the image
+## img_path <- "elephant.jpg"
+## img <- image_load(img_path, target_size = c(224, 224))
+## x <- image_to_array(img)
+
+## # ensure we have a 4d tensor with single element in the batch dimension, then preprocess the input for prediction using resnet50
+## x <- array_reshape(x, c(1, dim(x)))
+## x <- imagenet_preprocess_input(x)
+
+## # make predictions then decode and print them
+## preds <- model %>% predict(x)
+## imagenet_decode_predictions(preds, top = 3)[[1]]
+```
+
+#### Extract Features with VGG16
+
+```{r}
+## model <- application_vgg16(weights = 'imagenet', include_top = FALSE)
+
+## img_path <- "elephant.jpg"
+## img <- image_load(img_path, target_size = c(224, 224))
+## x <- image_to_array(img)
+
+## x <- array_reshape(x, c(1, dim(x)))
+## x <- imagenet_preprocess_input(x)
+
+## features <- model %>% predict(x) 
+# imagenet_decode_predictions(features, top = 3)[[1]]
+```
+    
+#### Extract features from an arbitrary intermediate layer with VGG19 
+
+```{r}
+## base_model <- application_vgg19(weights = "imagenet")
+
+## model <- keras_model(inputs = base_model$input,
+##                      outputs = get_layer(base_model, 'block4_pool')$output)
+
+## img_path <- "elephant.jpg"
+## img <- image_load(img_path, target_size = c(224, 224))
+## x <- image_to_array(img)
+## x <- array_reshape(x, c(1, dim(x)))
+## x <- imagenet_preprocess_input(x)
+
+## block4_pool_features <- model %>% predict(x)
+
+## imagenet_decode_predictions(block4_pool_features, top = 3)[[1]]
+```
+
+#### Fine Tune InceptionV3 on a new set of classes
+
+```{r}
+## # create the base pretrained model
+## base_model <- application_inception_v3(weights = 'imagenet', include_top = FALSE)
+
+## # add our custom layers
+## predictions <- base_model$output %>%
+##     layer_global_average_pooling_2d() %>%
+##     layer_dense(units = 1024, activation = 'relu') %>%
+##     layer_dense(units = 200, activation = 'softmax')
+
+## # create training model
+## model <- keras_model(inputs = base_model$input, outputs = predictions)
+
+## # freeze all convolutional inceptionv3 layers
+## freeze_weights(base_model)
+
+## # compile the model
+## model %>% compile(
+##               optimizer = "rmsprop",
+##               loss = "categorical_crossentropy"
+##           )
+
+## # train the model on a few epochs
+## model %>% fit_generator(...)
+
+## # at this point, the top layers are well trained and we can start fine tuning convolutional layers from inception V3. We will freeze the bottom N layers and train the remaining top layers.
+
+## # visualize layer names and indices to see what we should freeze
+## layers <- base_model$layers
+
+## for (i in 1:length(layers)) cat(i, layers[[i]]$name, "\n")
+
+## # train the top 2 inception blocks (freeze first 172 layers)
+## freeze_weights(base_model, from = 1, to = 172)
+## unfreeze_weights(base_model, from = 173)
+
+## # recompile the model for these modifications to take effect
+## model %>% compile(
+##               optimizer = optimizer_sgd(lr = 0.0001, momentum = 0.9),
+##               loss = "categorical_crossentropy"
+##           )
+
+## # train the model again fine tuning the top 2 inception blocks
+## model %>% fit_generator(...)
+```
+
+#### Build InceptionV3 over a custom input tensor 
+
+```{r}
+# this could also be the output to a different keras model or layer
+## input_tensor <- layer_input(shape = c(224, 224, 3))
+
+## model <- application_inception_V3(input_tensor = input_tensor,
+##                                   weights = "imagenet",
+##                                   include_top = TRUE)
+```
+
