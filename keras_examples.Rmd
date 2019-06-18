@@ -1,0 +1,35 @@
+---
+title: "Naming and Locating Objects in Images | TF4R Blog <img src=\"Keras_Logo.jpg\" style=\"float: right; width: 80px;\"/>"
+author: "Michael Rose"
+output: 
+  html_document:
+     highlight: zenburn
+     theme: lumen
+     df_print: paged
+     fig_align: center
+     code_folding: hide
+---
+
+```{r, echo = FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, out.width = "100%")
+
+# programming
+library(tensorflow)
+library(keras)
+```
+
+# {.tabset}
+
+## Intro
+
+This is a work-through of the tutorial at 
+[Naming and Locating Objects in Images](https://blogs.rstudio.com/tensorflow/posts/2018-11-05-naming-locating-objects/)
+
+
+### Check GPU Availability
+
+```{r}
+K = backend()
+sess = K$get_session()
+sess$list_devices()
+```

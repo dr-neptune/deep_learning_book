@@ -1,0 +1,70 @@
+---
+title: "TensorFlow Estimators"
+author: "Michael Rose"
+output: 
+  html_document:
+     highlight: zenburn
+     theme: lumen
+     df_print: paged
+     fig_align: center
+---
+
+```{r, echo = FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, out.width = "100%")
+```
+
+# {.tabset}
+        
+## Index
+
+The tfestimators package is an R interface to TensorFlow Estimators, a high level API that provides implementations of many different model types including both linear models and deep neural networks.
+
+```{r}
+library(tensorflow)
+library(tfestimators)
+```
+
+### Linear Regression 
+
+We will run a simple linear regression on mtcars to demonstrate the use of TFEstimators. We will illustrate how input functions can be constructed and used to feed data to an estimator, how feature columns can be used to specify a set of transformations to apply to input data, and how these pieces come together in the Estimator infterface. 
+
+#### Input Function 
+
+Estimators can receive data through input functions. Input functions take an arbitrary data source (in memory datasets, streaming data, custom data formats, and so on) and generate tensors that can be supplied to TensorFlow models. 
+
+The tfestimators package includes an `input_fn` function that can create TF input functions from common R data sources (e.g. data frames and matrices). Its also possible to write a fully custom input function. 
+
+```{r}
+# return an input_fn for a given subset of the data
+mtcars_input_fn <- function(data) {
+    input_fn(data,
+             features = c("displ", "cyl"),
+             response = "mpg")
+}
+```
+
+#### Feature Columns 
+
+Next we define the feature columns for our model. These specify how tensors received from the input function should be combined and transformed before entering the model training, evaluation, and prediction steps. 
+
+It can be a plain mapping or a transformation of other feature columns. 
+
+```{r}
+col_num_custom <- function(arg){
+    tf$feature_column$numeric_column(arg)
+}
+
+# create a list of feature columns
+cols <- feature_columns(
+    col_num_custom("disp"),
+    col_num_custom("cyl")
+)
+```
+
+#### Estimator 
+
+Now we can create the estimator by calling the linear regressor function and passing it a set of feature columns:
+
+```{r}
+model <- linear_regressor(feature_columns = cols)
+```
